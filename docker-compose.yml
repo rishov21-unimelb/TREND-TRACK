@@ -1,0 +1,58 @@
+name: instagram-trend-tracker
+
+services:
+  server:
+    build:
+      context: ./server
+    image: instagram-trend-tracker-server:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      HOST: 0.0.0.0
+      # SQLite file lives on the named volume so history survives a rebuild.
+      DATABASE_URL: /data/trends.db
+      # The client is served from the nginx container, which proxies /api —
+      # so requests arrive same-origin and CORS only matters for direct calls.
+      CORS_ORIGINS: http://localhost:8080,http://localhost:5173
+      # `mock` generates a coherent dataset; set to `live` plus
+      # INGESTION_SOURCE_URL to pull from a real collector (it degrades back to
+      # the generator when the source is unavailable).
+      INGESTION_MODE: ${INGESTION_MODE:-mock}
+      INGESTION_SOURCE_URL: ${INGESTION_SOURCE_URL:-}
+      INGESTION_SEED: ${INGESTION_SEED:-20260926}
+      INGESTION_TREND_COUNT: ${INGESTION_TREND_COUNT:-72}
+      INGESTION_HISTORY_DAYS: ${INGESTION_HISTORY_DAYS:-30}
+      # Keeps the dashboard moving without an external scheduler.
+      INGESTION_SCHEDULE_ENABLED: ${INGESTION_SCHEDULE_ENABLED:-true}
+      INGESTION_SCHEDULE_INTERVAL_MS: ${INGESTION_SCHEDULE_INTERVAL_MS:-900000}
+    ports:
+      - "${SERVER_PORT:-4000}:4000"
+    volumes:
+      - trend-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  client:
+    build:
+      context: ./client
+    image: instagram-trend-tracker-client:latest
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "${CLIENT_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  trend-data:
